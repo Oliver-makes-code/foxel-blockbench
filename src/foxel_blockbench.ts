@@ -1,3 +1,5 @@
+/// <reference types="blockbench-types" />
+
 const version: string = "0.1.0";
 
 const deletables: Deletable[] = [];
@@ -30,7 +32,14 @@ function scaleDownVec3(vec: [number, number, number]): [number, number, number] 
     return [vec[0] / 16, vec[1] / 16, vec[2] / 16];
 }
 
-function scaleDownUv(uv: [number, number, number, number]): [number, number, number, number] {
+function scaleDownUv(uv: [number, number, number, number], textureUuid?: string): [number, number, number, number] {
+    if (textureUuid) {
+        const texture = Texture.all.filter(it => it.uuid == textureUuid)[0];
+        const width = texture.uv_width;
+        const height = texture.uv_height;
+        return [uv[0] / width, uv[1] / height, uv[2] / width, uv[3] / height];
+    }
+
     return [uv[0] / 16, uv[1] / 16, uv[2] / 16, uv[3] / 16];
 }
 
@@ -41,6 +50,17 @@ function cullFace(face: CubeFaceDirection | ""): SideConfig["culling_side"] {
 function size(from: [number, number, number], to: [number, number, number]): [number, number, number] {
     return [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
 }
+
+function getTextureName(textureUuid?: string|false): string {
+    if (!textureUuid)
+        return "all";
+    return Texture.all.filter(it => it.uuid == textureUuid)[0].name;
+}
+
+type ModelRoot = {
+    textures: {[k in string]: string},
+    model: ModelPart
+};
 
 type SideConfig = {
     texture: string,
@@ -79,8 +99,12 @@ type ModelPart = {
 const groupNeedsUniqueName = Group.prototype.needsUniqueName, cubeNeedsUniqueName = Cube.prototype.needsUniqueName;
 
 function pluginLoad() {
+    Language.addTranslations("en", {
+        "action.foxel_export": "Foxel Engine Model"
+    });
+
     const format = new ModelFormat({
-        name: "Foxel Model",
+        name: "Foxel Engine Model",
         id: "foxel",
         icon: "bar_chart",
         animated_textures: false,
@@ -90,9 +114,14 @@ function pluginLoad() {
         single_texture: false,
         per_texture_uv_size: true,
         meshes: false,
-        confidential: true,
         rotate_cubes: true,
-        stretch_cubes: false
+        stretch_cubes: false,
+        centered_grid: false,
+        locators: true,
+        java_face_properties: true,
+        model_identifier: true,
+        legacy_editable_file_name: true,
+        texture_folder: true
     }); 
     deletables.push(format);
 
@@ -100,8 +129,7 @@ function pluginLoad() {
         name: "Foxel Model",
         extension: "json",
         remember: false,
-        compile(options?: any) {
-            console.log(options);
+        compile() {
             function createPart(node: OutlinerNode): ModelPart {
                 if (node instanceof Cube) {
                     return {
@@ -114,39 +142,38 @@ function pluginLoad() {
                         sides: {
                             north: {
                                 culling_side: cullFace(node.faces.north.cullface),
-                                texture: node.faces.north.texture || "all",
-                                uv: scaleDownUv(node.faces.north.uv)
+                                texture: getTextureName(node.faces.north.texture),
+                                uv: scaleDownUv(node.faces.north.uv, node.faces.north.texture || undefined)
                             },
                             south: {
                                 culling_side: cullFace(node.faces.south.cullface),
-                                texture: node.faces.south.texture || "all",
-                                uv: scaleDownUv(node.faces.south.uv)
+                                texture: getTextureName(node.faces.south.texture),
+                                uv: scaleDownUv(node.faces.south.uv, node.faces.south.texture || undefined)
                             },
                             east: {
                                 culling_side: cullFace(node.faces.east.cullface),
-                                texture: node.faces.east.texture || "all",
-                                uv: scaleDownUv(node.faces.east.uv)
+                                texture: getTextureName(node.faces.east.texture),
+                                uv: scaleDownUv(node.faces.east.uv, node.faces.east.texture || undefined)
                             },
                             west: {
                                 culling_side: cullFace(node.faces.west.cullface),
-                                texture: node.faces.west.texture || "all",
-                                uv: scaleDownUv(node.faces.west.uv)
+                                texture: getTextureName(node.faces.west.texture),
+                                uv: scaleDownUv(node.faces.west.uv, node.faces.west.texture || undefined)
                             },
                             up: {
                                 culling_side: cullFace(node.faces.up.cullface),
-                                texture: node.faces.up.texture || "all",
-                                uv: scaleDownUv(node.faces.up.uv)
+                                texture: getTextureName(node.faces.up.texture),
+                                uv: scaleDownUv(node.faces.up.uv, node.faces.up.texture || undefined)
                             },
                             down: {
                                 culling_side: cullFace(node.faces.down.cullface),
-                                texture: node.faces.down.texture || "all",
-                                uv: scaleDownUv(node.faces.down.uv)
+                                texture: getTextureName(node.faces.down.texture),
+                                uv: scaleDownUv(node.faces.down.uv, node.faces.down.texture || undefined)
                             }
                         }
                     }
                 }
                 if (node instanceof Group) {
-                    
                     return {
                         type: "list",
                         name: node.name,
@@ -160,7 +187,7 @@ function pluginLoad() {
                 //@ts-ignore
                 return {}
             }
-            const part: ModelPart = {
+            const model: ModelPart = {
                 type: "list",
                 name: "root",
                 position: [0, 0, 0],
@@ -169,7 +196,18 @@ function pluginLoad() {
                 rotation: [0, 0, 0, 1],
                 parts: Outliner.root.map(createPart)
             }
-            return JSON.stringify(part, null, 4);
+
+            const textures: {[k in string]: string} = {};
+
+            Texture.all.forEach(it => {
+                textures[it.name] = `${it.namespace}:${it.folder ? it.folder + "/" : ""}${it.name}`;
+            });
+
+            const root: ModelRoot = {
+                textures,
+                model
+            };
+            return JSON.stringify(root, null, 4);
         },
     });
     deletables.push(codec);
@@ -180,7 +218,7 @@ function pluginLoad() {
             codec.export();
         }
     });
-    MenuBar.addAction(exportAction);
+    MenuBar.addAction(exportAction, "file.export.0");
     deletables.push(exportAction);
 
     const check = new ValidatorCheck(
