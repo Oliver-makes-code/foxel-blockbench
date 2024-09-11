@@ -121,7 +121,8 @@ function pluginLoad() {
         java_face_properties: true,
         model_identifier: true,
         legacy_editable_file_name: true,
-        texture_folder: true
+        texture_folder: true,
+        bone_rig: true
     }); 
     deletables.push(format);
 
